@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="ie=edge" http-equiv="X-UA-Compatible">
+  <title>Template</title>
+  <style>
+      body {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          flex-direction: column;
+          padding: 0;
+          margin: 0;
+          min-height: 100vh;
+      }
+      .controls {
+          position: fixed;
+          bottom: 0;
+          left: 50%;
+          transform: translateX(-50%);
+      }
+  </style>
+</head>
+<body>
+<div class="controls">
+  <button id="toggle">start/stop</button>
+</div>
+<div id="scene"></div>
+
+<script>
+  (function () {
+    // Size
+    // ...
+
+    // HTML Elements
+    const sceneElement = document.getElementById('scene');
+    const toggleButton = document.getElementById('toggle');
+
+    // State
+    let isPaused = true;
+
+    // Init
+    function init() {
+
+      // Handle toggle pause button click
+      toggleButton.addEventListener('click', togglePause);
+    }
+
+    function tick() {
+      if (!isPaused) {
+        // Repeat tick in the next frame
+        requestAnimationFrame(tick);
+      }
+    }
+
+    function main() {
+      init();
+
+      // Make an initial tick call
+      requestAnimationFrame(tick);
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      requestAnimationFrame(tick);
+    }
+
+    main();
+  })();
+</script>
+</body>
+</html>
