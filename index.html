@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
   <meta content="ie=edge" http-equiv="X-UA-Compatible">
-  <title>Template</title>
+  <title>Basic WebGL Rendering With Shared State</title>
   <style>
       body {
           display: flex;
@@ -21,38 +21,238 @@
           left: 50%;
           transform: translateX(-50%);
       }
+      .canvas {
+          display: block;
+          image-rendering: optimizeSpeed;
+          image-rendering: -moz-crisp-edges;
+          image-rendering: -webkit-optimize-contrast;
+          image-rendering: -o-crisp-edges;
+          image-rendering: pixelated;
+          -ms-interpolation-mode: nearest-neighbor;
+      }
   </style>
 </head>
 <body>
 <div class="controls">
   <button id="toggle">start/stop</button>
 </div>
-<div id="scene"></div>
+<canvas class="canvas" id="scene"></canvas>
 
 <script>
   (function () {
     // Size
-    // ...
+    const width = 500;
+    const height = 500;
 
     // HTML Elements
     const sceneElement = document.getElementById('scene');
     const toggleButton = document.getElementById('toggle');
 
+    // Get context of the canvas
+    const gl = sceneElement.getContext('webgl2');
+
     // State
     let isPaused = true;
+    let state = new Uint8Array(width * height);
+
+    // WebGL helpers
+    function createShader(type, source) {
+      // Create WebGl Shader from GLSL source and compile it
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+
+      // Check if the compilation went without any issues
+      const success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+      if (success) {
+        return shader;
+      }
+
+      // Log any errors
+      console.log(gl.getShaderInfoLog(shader));
+
+      // Clean up after yourself
+      gl.deleteShader(shader);
+    }
+    function createProgram(vertexShader, fragmentShader) {
+      // Create WebGl program attach previously compiled shaders and link it
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+
+      // Check if the linking went without any issues
+      const success = gl.getProgramParameter(program, gl.LINK_STATUS);
+      if (success) {
+        return program;
+      }
+
+      // Log any errors
+      console.log(gl.getProgramInfoLog(program));
+
+      // Clean up after yourself
+      gl.deleteProgram(program);
+    }
+
+    // Shader sources
+    // Define source of the vertex shader in GLSL
+    // It's simple pass-through program
+    const vertexShaderSource = `#version 300 es
+      in vec4 a_position;
+
+      void main() {
+        gl_Position = a_position;
+      }
+    `;
+
+    // Define source of the fragment shader in GLSL
+    // It's responsible for rendering state on the plane
+    const fragmentShaderSource = `#version 300 es
+      precision highp float;
+      uniform sampler2D srcTex;
+
+      out vec4 outColor;
+
+      void main() {
+        ivec2 texelCoord = ivec2(gl_FragCoord.xy);
+
+        // Get current cell value
+        vec4 value = texelFetch(srcTex, texelCoord, 0);
+
+        if(value.r > 0.0) {
+          // render alive cell as black
+          outColor = vec4(0, 0, 0, 1);
+        } else {
+          // render dead cell as white
+          outColor = vec4(1, 1, 1, 1);
+        }
+      }
+    `;
+
+    // Create Shaders from sources
+    const vertexShader = createShader(gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+    // Create a program for rendering the state onto the canvas
+    const program = createProgram(vertexShader, fragmentShader);
+    const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
+    const srcTexLoc = gl.getUniformLocation(program, 'srcTex');
+
+    // Define a 2D texture as our display texture
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    // Create buffer defining plane that we will render on
+    // Since we render triangles we need to define six x,y pairs
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+
+    // Attach this plane to display program
+    gl.enableVertexAttribArray(positionAttributeLocation);
+    gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
     // Init
+    function initState() {
+      // Initialize the state with random vector
+      for (let i = 0; i < width * height; i++) {
+        state[i] = Math.random() > 0.5 ? 0 : 1;
+      }
+    }
+
+    function initScene() {
+      // Setup the scene size
+      sceneElement.width = width;
+      sceneElement.height = height;
+      sceneElement.style.width = width + 'px';
+      sceneElement.style.height = height + 'px';
+    }
+
     function init() {
+      // Update state and generate scene
+      initState();
+      initScene();
 
       // Handle toggle pause button click
       toggleButton.addEventListener('click', togglePause);
     }
 
     function tick() {
+      // Update state and rerender scene
+      update();
+      render();
+
       if (!isPaused) {
         // Repeat tick in the next frame
         requestAnimationFrame(tick);
       }
+    }
+
+    function getCellAt(x, y) {
+      // Get the state of the cell by coords
+      if (x > 0 && x < width && y > 0 && y < height) {
+        return state[y * width + x];
+      }
+
+      // Fallback to 0 if out of bounds
+      return 0;
+    }
+
+    function update() {
+      // Create placeholder for the new state
+      const newState = new Uint8Array(width * height);
+
+      for (let i = 0; i < width; i++) {
+        for (let j = 0; j < height; j++) {
+
+          // get the sum of the neighbours
+          const sum =
+            getCellAt(i - 1, j - 1) +
+            getCellAt(i, j - 1) +
+            getCellAt(i + 1, j - 1) +
+            getCellAt(i - 1, j) +
+            getCellAt(i + 1, j) +
+            getCellAt(i - 1, j + 1) +
+            getCellAt(i, j + 1) +
+            getCellAt(i + 1, j + 1);
+
+          // Game of life logic
+          if (sum === 3) {
+            newState[j * width + i] = 1;
+          } else if (sum === 2) {
+            newState[j * width + i] = state[j * width + i];
+          } else {
+            newState[j * width + i] = 0;
+          }
+        }
+      }
+
+      // Update the state with next generation
+      state = newState;
+    }
+
+    function render() {
+      // Set display program as current one
+      gl.useProgram(program);
+
+      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+      // Clear the canvas
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      // Use state as texture since it's the same format
+      gl.uniform1i(srcTexLoc, 0);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, state);
+
+      // Render scene onto the canvas
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
 
     function main() {
